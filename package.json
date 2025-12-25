@@ -1,16 +1,17 @@
+
 {
-  "name": "ai-crypto-agent",
+  "name": "ai-crypto-bot",
   "version": "1.0.0",
+  "private": true,
   "type": "module",
-  "main": "orchestrator.js",
   "scripts": {
-    "start": "node orchestrator.js"
-  },
-  "engines": {
-    "node": ">=18"
+    "start": "node core_intelligence_engine.js"
   },
   "dependencies": {
     "axios": "^1.6.0",
     "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
