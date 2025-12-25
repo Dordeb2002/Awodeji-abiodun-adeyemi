@@ -1,19 +1,17 @@
 {
   "name": "ai-crypto-agent",
   "version": "1.0.0",
-  "description": "AI-powered crypto monitoring and signal bot",
-  "main": "core_intelligence_engine.js",
+  "description": "AI crypto automation bot",
+  "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node core_intelligence_engine.js"
+    "start": "node index.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
     "axios": "^1.6.0",
-    "dotenv": "^16.4.5",
-    "node-fetch": "^3.3.2",
-    "ws": "^8.18.0"
+    "dotenv": "^16.3.1"
   }
 }
