@@ -1,211 +1,105 @@
 
-import fetch from "node-fetch";
+import axios from "axios";
 
 /* =========================
-   ENV VARIABLES (RAILWAY)
+   ENV VARIABLES
 ========================= */
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+if (!BOT_TOKEN || !CHAT_ID) {
+  console.error("❌ Missing Telegram environment variables");
+}
 
 /* =========================
    TELEGRAM AGENT
 ========================= */
 async function sendTelegram(text) {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
-  await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: TELEGRAM_CHAT_ID,
-      text,
-      parse_mode: "Markdown"
-    })
-  });
+  try {
+    await axios.post(
+      `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+      {
+        chat_id: CHAT_ID,
+        text,
+        parse_mode: "Markdown"
+      }
+    );
+  } catch (err) {
+    console.error("Telegram error:", err.message);
+  }
 }
 
 /* =========================
-   STARTUP MESSAGE (IMPORTANT)
+   STARTUP MESSAGE
 ========================= */
 (async () => {
-  try {
-    await sendTelegram("🚀 *MEXC PRE-LIST AI BOT INITIALIZED*\nAwaiting signals...");
-    console.log("Bot initialized");
-  } catch (e) {
-    console.error("Telegram startup error:", e.message);
-  }
+  await sendTelegram("🚀 *BOT ONLINE*\nMEXC pre-list scanner initialized.");
+  console.log("✅ Bot initialized");
 })();
 
 /* =========================
-   MEXC LISTING AGENT
-   (Pre-list + Dashboard)
+   DEXSCREENER FETCH
 ========================= */
-async function fetchMexcListings() {
+async function fetchDexPairs(chain) {
   try {
-    const res = await fetch("https://www.mexc.com/open/api/v2/market/symbols");
-    const data = await res.json();
-    return data.data || [];
-  } catch {
+    const query = chain === "sol" ? "SOL" : "BSC";
+    const res = await axios.get(
+      `https://api.dexscreener.com/latest/dex/search?q=${query}`,
+      { timeout: 15000 }
+    );
+    return res.data?.pairs || [];
+  } catch (e) {
+    console.error("Dex fetch error:", e.message);
     return [];
   }
 }
 
 /* =========================
-   ON-CHAIN DEX SCANNER
-   (BSC + SOL)
+   SAFE FILTERS
 ========================= */
-async function fetchDexPairs(chain = "bsc") {
-  const url =
-    chain === "sol"
-      ? "https://api.dexscreener.com/latest/dex/search?q=SOL"
-      : "https://api.dexscreener.com/latest/dex/search?q=BSC";
-
+function isGoodPair(pair) {
   try {
-    const res = await fetch(url);
-    const data = await res.json();
-    return data.pairs || [];
+    if (!pair?.liquidity?.usd) return false;
+    if (!pair?.volume?.h1) return false;
+    if (!pair?.fdv) return false;
+
+    if (pair.liquidity.usd < 20000) return false;
+    if (pair.volume.h1 < 5000) return false;
+    if (pair.fdv > 5_000_000) return false;
+
+    return true;
   } catch {
-    return [];
+    return false;
   }
 }
 
 /* =========================
-   LIQUIDITY AGENT
+   MAIN LOOP (LIGHT)
 ========================= */
-function liquidityCheck(pair) {
-  return pair.liquidity?.usd > 20000;
-}
+async function scan() {
+  console.log("🔍 Scanning...");
 
-/* =========================
-   MARKET CAP AGENT
-========================= */
-function marketCapCheck(pair) {
-  return pair.fdv && pair.fdv < 5_000_000;
-}
+  const bscPairs = await fetchDexPairs("bsc");
+  const solPairs = await fetchDexPairs("sol");
 
-/* =========================
-   VOLUME AGENT
-========================= */
-function volumeCheck(pair) {
-  return pair.volume?.h1 > 5000;
-}
+  const allPairs = [...bscPairs, ...solPairs];
 
-/* =========================
-   RUG / HONEYPOT HEURISTIC
-========================= */
-function rugCheck(pair) {
-  if (!pair.txns) return false;
-  return pair.txns.h1.buys > pair.txns.h1.sells;
-}
-
-/* =========================
-   WHALE ENTRY AGENT
-========================= */
-function whaleCheck(pair) {
-  return pair.txns?.h1?.buys >= 5;
-}
-
-/* =========================
-   SOCIAL / NARRATIVE AGENT
-========================= */
-function socialSignal(pair) {
-  return (
-    pair.baseToken?.name?.length < 10 ||
-    pair.baseToken?.symbol?.includes("AI") ||
-    pair.baseToken?.symbol?.includes("DOG")
-  );
-}
-
-/* =========================
-   AI SCORING AGENT (OpenAI)
-========================= */
-async function aiScore(pair) {
-  if (!OPENAI_API_KEY) return 70;
-
-  try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "user",
-            content: `Score this token for post-listing pump potential (0-100):
-Liquidity: ${pair.liquidity?.usd}
-Volume: ${pair.volume?.h1}
-FDV: ${pair.fdv}`
-          }
-        ]
-      })
-    });
-
-    const data = await res.json();
-    const score = parseInt(data.choices[0].message.content.match(/\d+/));
-    return isNaN(score) ? 70 : score;
-  } catch {
-    return 70;
-  }
-}
-
-/* =========================
-   MASTER FILTER (NOT TOO TIGHT)
-========================= */
-async function evaluatePair(pair) {
-  if (!liquidityCheck(pair)) return null;
-  if (!marketCapCheck(pair)) return null;
-  if (!volumeCheck(pair)) return null;
-  if (!rugCheck(pair)) return null;
-  if (!whaleCheck(pair)) return null;
-  if (!socialSignal(pair)) return null;
-
-  const score = await aiScore(pair);
-  if (score < 75) return null;
-
-  return {
-    name: pair.baseToken.name,
-    symbol: pair.baseToken.symbol,
-    chain: pair.chainId,
-    price: pair.priceUsd,
-    liquidity: pair.liquidity.usd,
-    fdv: pair.fdv,
-    score,
-    url: pair.url
-  };
-}
-
-/* =========================
-   CORE LOOP
-========================= */
-async function mainLoop() {
-  const pairs = [
-    ...(await fetchDexPairs("bsc")),
-    ...(await fetchDexPairs("sol"))
-  ];
-
-  for (const pair of pairs) {
-    const result = await evaluatePair(pair);
-    if (!result) continue;
+  for (const pair of allPairs.slice(0, 5)) {
+    if (!isGoodPair(pair)) continue;
 
     await sendTelegram(
-      `🔥 *PRE-MEXC ALPHA DETECTED*\n\n` +
-      `🪙 ${result.name} (${result.symbol})\n` +
-      `🌐 ${result.chain}\n` +
-      `💧 Liquidity: $${result.liquidity}\n` +
-      `📊 FDV: $${result.fdv}\n` +
-      `🤖 AI Score: ${result.score}\n` +
-      `🔗 ${result.url}`
+      `🔥 *EARLY DEX SIGNAL*\n\n` +
+      `🪙 ${pair.baseToken?.name} (${pair.baseToken?.symbol})\n` +
+      `🌐 ${pair.chainId}\n` +
+      `💧 Liquidity: $${Math.round(pair.liquidity.usd)}\n` +
+      `📊 FDV: $${Math.round(pair.fdv)}\n` +
+      `🔗 ${pair.url}`
     );
   }
 }
 
 /* =========================
-   RUN EVERY 60 SECONDS
+   INTERVALS (SAFE)
 ========================= */
-setInterval(mainLoop, 60_000);
-setInterval(() => {
-  console.log("Bot heartbeat - still running");
-}, 60_000);
+setInterval(scan, 120000); // every 2 mins
+setInterval(() => console.log("💓 Bot alive"), 60000);
