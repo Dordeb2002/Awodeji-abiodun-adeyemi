@@ -1,126 +1,208 @@
+
 import fetch from "node-fetch";
 
-// ------------------- ENVIRONMENT VARIABLES -------------------
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+/* =========================
+   ENV VARIABLES (RAILWAY)
+========================= */
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const BSCSCAN_API_KEY = process.env.BSCSCAN_API_KEY;
 
-// ------------------- TELEGRAM FUNCTION -----------------------
+/* =========================
+   TELEGRAM AGENT
+========================= */
 async function sendTelegram(text) {
-  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-  try {
-    await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: CHAT_ID,
-        text,
-        parse_mode: "Markdown"
-      })
-    });
-  } catch (e) {
-    console.error("Telegram send error:", e.message);
-  }
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+  await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: TELEGRAM_CHAT_ID,
+      text,
+      parse_mode: "Markdown"
+    })
+  });
 }
 
-// ------------------- STARTUP -------------------------------
+/* =========================
+   STARTUP MESSAGE (IMPORTANT)
+========================= */
 (async () => {
   try {
-    await sendTelegram("✅ Bot initialized and awaiting signals");
-    console.log("Startup message sent");
+    await sendTelegram("🚀 *MEXC PRE-LIST AI BOT INITIALIZED*\nAwaiting signals...");
+    console.log("Bot initialized");
   } catch (e) {
-    console.error("Startup Telegram error:", e.message);
+    console.error("Telegram startup error:", e.message);
   }
 })();
 
-// ------------------- MEXC DASHBOARD SCANNER -----------------
-async function scanMEXCDashboard() {
+/* =========================
+   MEXC LISTING AGENT
+   (Pre-list + Dashboard)
+========================= */
+async function fetchMexcListings() {
   try {
-    const resp = await fetch("https://www.mexc.com/open/api/v2/market/ticker");
-    const data = await resp.json();
-
-    const filtered = data.data.filter(
-      c => parseFloat(c.volume) > 10000 && parseFloat(c.change) > 50
-    );
-
-    for (const coin of filtered) {
-      await sendTelegram(`🚀 *MEXC Dashboard Coin*: ${coin.symbol}\nPrice: ${coin.lastPrice}\nExpected X: TBD`);
-      console.log("Dashboard coin signal sent:", coin.symbol);
-    }
-  } catch (e) {
-    console.error("MEXC dashboard scan error:", e.message);
+    const res = await fetch("https://www.mexc.com/open/api/v2/market/symbols");
+    const data = await res.json();
+    return data.data || [];
+  } catch {
+    return [];
   }
 }
 
-// ------------------- MEXC ANNOUNCEMENT SCANNER -------------
-async function scanMEXCAnnouncements() {
-  try {
-    const resp = await fetch("https://www.mexc.com/open/api/v2/market/announcement");
-    const data = await resp.json();
+/* =========================
+   ON-CHAIN DEX SCANNER
+   (BSC + SOL)
+========================= */
+async function fetchDexPairs(chain = "bsc") {
+  const url =
+    chain === "sol"
+      ? "https://api.dexscreener.com/latest/dex/search?q=SOL"
+      : "https://api.dexscreener.com/latest/dex/search?q=BSC";
 
-    for (const coin of data.data) {
-      await sendTelegram(`📢 *Upcoming MEXC Listing*: ${coin.symbol}\nListing time: ${coin.listTime}`);
-      console.log("Announcement signal sent:", coin.symbol);
-    }
-  } catch (e) {
-    console.error("MEXC announcement error:", e.message);
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    return data.pairs || [];
+  } catch {
+    return [];
   }
 }
 
-// ------------------- BSC SCANNER ----------------------------
-async function scanBSC() {
+/* =========================
+   LIQUIDITY AGENT
+========================= */
+function liquidityCheck(pair) {
+  return pair.liquidity?.usd > 20000;
+}
+
+/* =========================
+   MARKET CAP AGENT
+========================= */
+function marketCapCheck(pair) {
+  return pair.fdv && pair.fdv < 5_000_000;
+}
+
+/* =========================
+   VOLUME AGENT
+========================= */
+function volumeCheck(pair) {
+  return pair.volume?.h1 > 5000;
+}
+
+/* =========================
+   RUG / HONEYPOT HEURISTIC
+========================= */
+function rugCheck(pair) {
+  if (!pair.txns) return false;
+  return pair.txns.h1.buys > pair.txns.h1.sells;
+}
+
+/* =========================
+   WHALE ENTRY AGENT
+========================= */
+function whaleCheck(pair) {
+  return pair.txns?.h1?.buys >= 5;
+}
+
+/* =========================
+   SOCIAL / NARRATIVE AGENT
+========================= */
+function socialSignal(pair) {
+  return (
+    pair.baseToken?.name?.length < 10 ||
+    pair.baseToken?.symbol?.includes("AI") ||
+    pair.baseToken?.symbol?.includes("DOG")
+  );
+}
+
+/* =========================
+   AI SCORING AGENT (OpenAI)
+========================= */
+async function aiScore(pair) {
+  if (!OPENAI_API_KEY) return 70;
+
   try {
-    const resp = await fetch(`https://api.bscscan.com/api?module=account&action=txlist&address=0x0000000000000000000000000000000000000000&apikey=${BSCSCAN_API_KEY}`);
-    const data = await resp.json();
-    // TODO: Filter new contracts & large token moves
-  } catch (e) {
-    console.error("BSC scan error:", e.message);
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "user",
+            content: `Score this token for post-listing pump potential (0-100):
+Liquidity: ${pair.liquidity?.usd}
+Volume: ${pair.volume?.h1}
+FDV: ${pair.fdv}`
+          }
+        ]
+      })
+    });
+
+    const data = await res.json();
+    const score = parseInt(data.choices[0].message.content.match(/\d+/));
+    return isNaN(score) ? 70 : score;
+  } catch {
+    return 70;
   }
 }
 
-// ------------------- SOLANA SCANNER --------------------------
-async function scanSolana() {
-  try {
-    // TODO: Add Solana DEX scanning logic
-  } catch (e) {
-    console.error("Solana scan error:", e.message);
-  }
+/* =========================
+   MASTER FILTER (NOT TOO TIGHT)
+========================= */
+async function evaluatePair(pair) {
+  if (!liquidityCheck(pair)) return null;
+  if (!marketCapCheck(pair)) return null;
+  if (!volumeCheck(pair)) return null;
+  if (!rugCheck(pair)) return null;
+  if (!whaleCheck(pair)) return null;
+  if (!socialSignal(pair)) return null;
+
+  const score = await aiScore(pair);
+  if (score < 75) return null;
+
+  return {
+    name: pair.baseToken.name,
+    symbol: pair.baseToken.symbol,
+    chain: pair.chainId,
+    price: pair.priceUsd,
+    liquidity: pair.liquidity.usd,
+    fdv: pair.fdv,
+    score,
+    url: pair.url
+  };
 }
 
-// ------------------- AI FILTER (OpenAI) ----------------------
-async function analyzeWithAI(coinInfo) {
-  try {
-    // TODO: Use OpenAI API to analyze coin potential based on historical patterns & social sentiment
-    return coinInfo;
-  } catch (e) {
-    console.error("AI analysis error:", e.message);
-    return coinInfo;
-  }
-}
-
-// ------------------- WHALE DETECTION -------------------------
-async function detectWhales() {
-  try {
-    // TODO: Track wallets with large token movements to anticipate pumps
-  } catch (e) {
-    console.error("Whale detection error:", e.message);
-  }
-}
-
-// ------------------- MAIN LOOP ------------------------------
+/* =========================
+   CORE LOOP
+========================= */
 async function mainLoop() {
-  try {
-    await scanMEXCAnnouncements(); // Pre-list announcements
-    await scanMEXCDashboard();     // Dashboard coins
-    await scanBSC();                // BSC tokens
-    await scanSolana();             // Solana tokens
-    await detectWhales();           // Whale tracking
-    console.log("Scan cycle completed");
-  } catch (e) {
-    console.error("Main loop error:", e.message);
+  const pairs = [
+    ...(await fetchDexPairs("bsc")),
+    ...(await fetchDexPairs("sol"))
+  ];
+
+  for (const pair of pairs) {
+    const result = await evaluatePair(pair);
+    if (!result) continue;
+
+    await sendTelegram(
+      `🔥 *PRE-MEXC ALPHA DETECTED*\n\n` +
+      `🪙 ${result.name} (${result.symbol})\n` +
+      `🌐 ${result.chain}\n` +
+      `💧 Liquidity: $${result.liquidity}\n` +
+      `📊 FDV: $${result.fdv}\n` +
+      `🤖 AI Score: ${result.score}\n` +
+      `🔗 ${result.url}`
+    );
   }
 }
 
-// ------------------- RUN LOOP -------------------------------
-setInterval(mainLoop, 60000); // Run every 60 seconds
+/* =========================
+   RUN EVERY 60 SECONDS
+========================= */
+setInterval(mainLoop, 60_000);
