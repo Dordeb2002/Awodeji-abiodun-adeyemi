@@ -206,3 +206,6 @@ async function mainLoop() {
    RUN EVERY 60 SECONDS
 ========================= */
 setInterval(mainLoop, 60_000);
+setInterval(() => {
+  console.log("Bot heartbeat - still running");
+}, 60_000);
